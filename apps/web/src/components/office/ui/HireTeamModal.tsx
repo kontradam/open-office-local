@@ -5,16 +5,17 @@ import { nanoid } from "nanoid";
 import type { AgentDefinition } from "@office/shared";
 import { sendCommand } from "@/lib/connection";
 import { folderPickCallbacks } from "@/store/office-store";
-import { BACKEND_OPTIONS } from "./office-constants";
+import { BACKEND_OPTIONS, DEFAULT_BACKEND } from "./office-constants";
 import { TERM_PANEL, TERM_SURFACE, TERM_DIM, TERM_TEXT_BRIGHT, TERM_BORDER, TERM_BG, TERM_GREEN, TERM_SEM_YELLOW } from "./termTheme";
 import SpriteAvatar from "./SpriteAvatar";
 import TermModal from "./primitives/TermModal";
 import TermButton from "./primitives/TermButton";
 import TermInput from "./primitives/TermInput";
+import FileBrowser from "./FileBrowser";
 
 function HireTeamModal({ agentDefs, onCreateTeam, onClose, assetsReady, detectedBackends, projectDir }: {
   agentDefs: AgentDefinition[];
-  onCreateTeam: (leadId: string, memberIds: string[], backends: Record<string, string>, workDir?: string) => void;
+  onCreateTeam: (leadId: string, memberIds: string[], backends: Record<string, string>, workDir?: string, autoApprove?: boolean, names?: Record<string, string>) => void;
   onClose: () => void;
   assetsReady?: boolean;
   detectedBackends?: string[];
@@ -28,6 +29,14 @@ function HireTeamModal({ agentDefs, onCreateTeam, onClose, assetsReady, detected
   const [selectedDevId, setSelectedDevId] = useState<string>(devAgents[0]?.id ?? "");
   const [backends, setBackends] = useState<Record<string, string>>({});
   const [workDir, setWorkDir] = useState<string>(projectDir ?? "");
+  const [autoApprove, setAutoApprove] = useState(false);
+  const [showFiles, setShowFiles] = useState(false);
+  const [names, setNames] = useState<Record<string, string>>({});
+  const nameField = (def: AgentDefinition) => (
+    <TermInput type="text" value={names[def.id] ?? ""} maxLength={20} placeholder={`name: ${def.name}`}
+      onClick={(e) => e.stopPropagation()} onChange={(e) => setNames((p) => ({ ...p, [def.id]: e.target.value }))}
+      style={{ width: "100%", marginTop: 4, fontSize: 12, padding: "3px 6px" }} />
+  );
   const dirLocked = !!projectDir;
 
   const handleCreate = () => {
@@ -35,7 +44,8 @@ function HireTeamModal({ agentDefs, onCreateTeam, onClose, assetsReady, detected
     const memberIds: string[] = [];
     if (selectedDevId) memberIds.push(selectedDevId);
     if (reviewer) memberIds.push(reviewer.id);
-    onCreateTeam(leader.id, memberIds, backends, workDir || undefined);
+    const customNames = Object.fromEntries(Object.entries(names).map(([k, v]) => [k, v.trim()]).filter(([k, v]) => v && (k === leader.id || memberIds.includes(k))));
+    onCreateTeam(leader.id, memberIds, backends, workDir || undefined, autoApprove, Object.keys(customNames).length ? customNames : undefined);
   };
 
   const fixedRows: { def: AgentDefinition; label: string }[] = [];
@@ -74,9 +84,7 @@ function HireTeamModal({ agentDefs, onCreateTeam, onClose, assetsReady, detected
             <TermButton
               variant="dim"
               onClick={() => {
-                const rid = nanoid(6);
-                folderPickCallbacks.set(rid, (p) => setWorkDir(p));
-                sendCommand({ type: "PICK_FOLDER", requestId: rid });
+                setShowFiles(true);
               }}
             >Browse</TermButton>
           )}
@@ -88,6 +96,13 @@ function HireTeamModal({ agentDefs, onCreateTeam, onClose, assetsReady, detected
         )}
       </div>
 
+      <label style={{ display: "flex", gap: 8, alignItems: "flex-start", marginBottom: 12, cursor: "pointer", fontFamily: "var(--font-mono)", fontSize: 12, color: autoApprove ? TERM_SEM_YELLOW : TERM_DIM }}>
+        <input type="checkbox" checked={autoApprove} onChange={(e) => setAutoApprove(e.target.checked)} style={{ marginTop: 2 }} />
+        <span>
+          Unattended mode: no plan approval
+          <span style={{ display: "block", fontSize: 10, opacity: 0.75, marginTop: 2 }}>The lead asks no questions and the team starts right after the plan. Describe the goal precisely in the first message.</span>
+        </span>
+      </label>
       <div style={{ fontSize: 12, color: TERM_DIM, marginBottom: 6, fontFamily: "var(--font-mono)", letterSpacing: "0.05em" }}>SELECT TEAM MEMBERS</div>
       <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 12 }}>
         {/* Fixed rows: leader and reviewer */}
@@ -108,9 +123,10 @@ function HireTeamModal({ agentDefs, onCreateTeam, onClose, assetsReady, detected
                 {def.name} <span style={{ color: TERM_SEM_YELLOW, fontSize: 11, fontFamily: "var(--font-mono)" }}>{label}</span>
               </div>
               <div style={{ fontSize: 13, color: TERM_DIM }}>{def.role}</div>
+              {nameField(def)}
             </div>
             <select
-              value={backends[def.id] ?? "claude"}
+              value={backends[def.id] ?? DEFAULT_BACKEND}
               onClick={(e) => e.stopPropagation()}
               onChange={(e) => setBackends((prev) => ({ ...prev, [def.id]: e.target.value }))}
               style={{
@@ -149,7 +165,7 @@ function HireTeamModal({ agentDefs, onCreateTeam, onClose, assetsReady, detected
                 <div style={{ fontSize: 14, fontWeight: 700, color: TERM_TEXT_BRIGHT, marginTop: 6, width: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{def.name}</div>
                 <div style={{ fontSize: 12, color: TERM_DIM, marginTop: 2, width: "100%", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{def.role}</div>
                 <select
-                  value={backends[def.id] ?? "claude"}
+                  value={backends[def.id] ?? DEFAULT_BACKEND}
                   onClick={(e) => { e.stopPropagation(); setSelectedDevId(def.id); }}
                   onChange={(e) => { setSelectedDevId(def.id); setBackends((prev) => ({ ...prev, [def.id]: e.target.value })); }}
                   style={{
@@ -165,7 +181,11 @@ function HireTeamModal({ agentDefs, onCreateTeam, onClose, assetsReady, detected
             );
           })}
         </div>
+        {devAgents.find((d) => d.id === selectedDevId) && (
+          <div style={{ marginTop: 4 }}>{nameField(devAgents.find((d) => d.id === selectedDevId)!)}</div>
+        )}
       </div>
+      <FileBrowser open={showFiles} onClose={() => setShowFiles(false)} mode="pick" startPath={workDir} onPick={(p) => setWorkDir(p)} />
     </TermModal>
   );
 }

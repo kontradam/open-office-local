@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Office</title>
+<style>
+  :root { --bg:#0d1117; --bar:#161b22; --line:#30363d; --text:#e6edf3; --muted:#7d8590; --green:#3fb950; --red:#f85149; color-scheme:dark; }
+  * { box-sizing:border-box; }
+  html, body { margin:0; height:100%; background:var(--bg); color:var(--text); font:13px/1.3 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace; overflow:hidden; }
+  #bar { display:flex; align-items:stretch; height:36px; background:var(--bar); border-bottom:1px solid var(--line); overflow-x:auto; }
+  .tab { display:flex; align-items:center; gap:7px; padding:0 14px; border-right:1px solid var(--line); cursor:pointer; white-space:nowrap; color:var(--muted); user-select:none; }
+  .tab:hover { color:var(--text); }
+  .tab.on { background:var(--bg); color:var(--text); box-shadow:inset 0 2px 0 var(--green); }
+  .dot { width:7px; height:7px; border-radius:50%; background:var(--muted); flex:none; }
+  .dot.ok { background:var(--green); } .dot.down { background:var(--red); }
+  .port { font-size:11px; opacity:.6; }
+  .icon { opacity:.5; padding:2px 3px; } .icon:hover { opacity:1; }
+  #help { margin-left:auto; padding:0 12px; display:flex; align-items:center; color:var(--muted); font-size:11px; white-space:nowrap; }
+  #frames { position:absolute; top:36px; left:0; right:0; bottom:0; }
+  #frames iframe { position:absolute; inset:0; width:100%; height:100%; border:0; background:var(--bg); }
+  #frames iframe[hidden] { display:none; }
+  #missing { padding:40px; max-width:560px; line-height:1.6; }
+  #missing a { color:var(--green); }
+</style>
+</head>
+<body>
+<div id="bar"><div id="help">double-click = rename · ↗ = new window</div></div>
+<div id="frames"></div>
+<script>
+const MAIN = Number(location.port) || 80;
+const PORTS = (new URLSearchParams(location.search).get('ports') || '').split(',').map(Number).filter(Boolean);
+const NAMES_KEY = 'office-tabs';
+const ACTIVE_KEY = 'office-tabs-active';
+let names = {}; try { names = JSON.parse(localStorage.getItem(NAMES_KEY) || '{}'); } catch {}
+const saveNames = () => { try { localStorage.setItem(NAMES_KEY, JSON.stringify(names)); } catch {} };
+const label = p => names[p] || (p === MAIN ? 'Main' : `Project ${PORTS.indexOf(p) + 1}`);
+let conn = null; try { conn = JSON.parse(localStorage.getItem('office_connection') || 'null'); } catch {}
+
+function urlFor(p) {
+  if (p === MAIN) return '/office';
+  const d = encodeURIComponent(JSON.stringify({ t: conn.sessionToken, m: conn.machineId }));
+  return `${location.protocol}//${location.hostname}:${p}/office#office=${d}`;
+}
+
+const frames = document.getElementById('frames'), bar = document.getElementById('bar'), help = document.getElementById('help');
+const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;' }[c]));
+
+function drawBar(active) {
+  bar.querySelectorAll('.tab').forEach(t => t.remove());
+  for (const p of [MAIN, ...PORTS]) {
+    const t = document.createElement('div');
+    t.className = 'tab' + (p === active ? ' on' : ''); t.dataset.p = p; t.title = `port ${p}`;
+    t.innerHTML = `<span class="dot" id="d${p}"></span>${esc(label(p))} <span class="port">:${p}</span><span class="icon" data-new="${p}" title="open in a new window">↗</span>`;
+    bar.insertBefore(t, help);
+  }
+  probe();
+}
+
+async function connect() {
+  try { conn = JSON.parse(localStorage.getItem('office_connection') || 'null'); } catch {}
+  if (conn?.sessionToken) return;
+  try {
+    const r = await fetch('/connect', { cache:'no-store' });
+    if (!r.ok) return;
+    const d = await r.json();
+    conn = { mode:'ws', machineId:d.machineId, gatewayId:d.gatewayId, wsUrl:location.origin.replace(/^http/, 'ws'), role:d.role || 'owner', sessionToken:d.sessionToken };
+    try { localStorage.setItem('office_connection', JSON.stringify(conn)); } catch {}
+  } catch {}
+}
+
+async function open_(p) {
+  if (p !== MAIN && !conn?.sessionToken) await connect();
+  if (p !== MAIN && !conn?.sessionToken) {
+    frames.innerHTML = `<div id="missing">Pair the main office first: <a href="/pair">/pair</a>. Then come back to <a href="/tabs">/tabs</a> and the project tabs will sign in on their own.</div>`;
+    return;
+  }
+  document.getElementById('missing')?.remove();
+  let f = frames.querySelector(`iframe[data-p="${p}"]`);
+  if (!f) { f = document.createElement('iframe'); f.dataset.p = p; f.src = urlFor(p); f.allow = 'clipboard-read; clipboard-write; microphone'; frames.appendChild(f); }
+  frames.querySelectorAll('iframe').forEach(x => x.hidden = x !== f);
+  try { localStorage.setItem(ACTIVE_KEY, p); } catch {}
+  drawBar(p);
+  document.title = `${label(p)} · Office`;
+}
+
+async function probe() {
+  for (const p of [MAIN, ...PORTS]) {
+    const d = document.getElementById('d' + p); if (!d) continue;
+    try { await fetch(`${location.protocol}//${location.hostname}:${p}/pair.html`, { mode:'no-cors', cache:'no-store' }); d.className = 'dot ok'; }
+    catch { d.className = 'dot down'; }
+  }
+}
+
+bar.addEventListener('click', e => {
+  const n = e.target.closest('[data-new]');
+  if (n) { e.stopPropagation(); const p = +n.dataset.new; if (p === MAIN || conn?.sessionToken) window.open(urlFor(p), '_blank'); return; }
+  const t = e.target.closest('.tab'); if (t) open_(+t.dataset.p);
+});
+bar.addEventListener('dblclick', e => {
+  const t = e.target.closest('.tab'); if (!t) return;
+  const p = +t.dataset.p, n = prompt(`Tab name :${p} (empty = default)`, names[p] || '');
+  if (n === null) return;
+  if (n.trim()) names[p] = n.trim().slice(0, 30); else delete names[p];
+  saveNames(); drawBar(+(localStorage.getItem(ACTIVE_KEY) || MAIN));
+});
+setInterval(probe, 30000);
+let start = MAIN; try { const a = +localStorage.getItem(ACTIVE_KEY); if ([MAIN, ...PORTS].includes(a)) start = a; } catch {}
+open_(start);
+</script>
+</body>
+</html>

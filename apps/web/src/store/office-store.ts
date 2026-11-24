@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { AgentStatus, GatewayEvent, TaskResultPayload, AgentDefinition, UserRole } from "@office/shared";
+import type { DirListedEvent, FileReadEvent, AgentStatus, GatewayEvent, TaskResultPayload, AgentDefinition, UserRole } from "@office/shared";
 import { tunnelRewrite } from "@/components/office/ui/office-utils";
 import { sendCommand } from "@/lib/connection";
 
@@ -7,6 +7,9 @@ import { sendCommand } from "@/lib/connection";
 export const folderPickCallbacks = new Map<string, (path: string) => void>();
 /** Pending UPLOAD_IMAGE callbacks: requestId → callback */
 export const imageUploadCallbacks = new Map<string, (path: string) => void>();
+/** Pending LIST_DIR / READ_FILE callbacks (file browser): requestId → callback */
+export const dirListCallbacks = new Map<string, (ev: DirListedEvent) => void>();
+export const fileReadCallbacks = new Map<string, (ev: FileReadEvent) => void>();
 
 // ── Tauri desktop notifications ──
 
@@ -1099,6 +1102,16 @@ export const useOfficeStore = create<OfficeStore>((set, get) => ({
             cb(event.path);
             folderPickCallbacks.delete(event.requestId);
           }
+          return { agents };
+        }
+        case "DIR_LISTED": {
+          const cb = dirListCallbacks.get(event.requestId);
+          if (cb) { dirListCallbacks.delete(event.requestId); cb(event); }
+          return { agents };
+        }
+        case "FILE_READ": {
+          const cb = fileReadCallbacks.get(event.requestId);
+          if (cb) { fileReadCallbacks.delete(event.requestId); cb(event); }
           return { agents };
         }
         case "IMAGE_UPLOADED": {

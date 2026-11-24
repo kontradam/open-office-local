@@ -60,6 +60,10 @@ export const CreateTeamCommand = z.object({
   memberIds: z.array(z.string()),
   backends: z.record(z.string(), z.string()).optional(),
   workDir: z.string().optional(),
+  /** Approve the lead's plan automatically (unattended mode) */
+  autoApprove: z.boolean().optional(),
+  /** Custom agent names: definition id -> name (empty = default) */
+  names: z.record(z.string(), z.string()).optional(),
 });
 
 export const ServePreviewCommand = z.object({
@@ -135,6 +139,27 @@ export const DeleteAgentDefCommand = z.object({
 export const PickFolderCommand = z.object({
   type: z.literal("PICK_FOLDER"),
   requestId: z.string(),
+});
+
+export const ListDirCommand = z.object({
+  type: z.literal("LIST_DIR"),
+  requestId: z.string(),
+  /** Absolute path or path relative to the workspace; empty = workspace root */
+  path: z.string().optional(),
+});
+
+/** Create a folder in the workspace. Reply: DIR_LISTED of the parent with `created` set. */
+export const MakeDirCommand = z.object({
+  type: z.literal("MAKE_DIR"),
+  requestId: z.string(),
+  path: z.string(),
+  name: z.string(),
+});
+
+export const ReadFileCommand = z.object({
+  type: z.literal("READ_FILE"),
+  requestId: z.string(),
+  path: z.string(),
 });
 
 export const UploadImageCommand = z.object({
@@ -242,6 +267,9 @@ export const CommandSchema = z.discriminatedUnion("type", [
   SaveAgentDefCommand,
   DeleteAgentDefCommand,
   PickFolderCommand,
+  ListDirCommand,
+  ReadFileCommand,
+  MakeDirCommand,
   UploadImageCommand,
   SuggestCommand,
   RateProjectCommand,
@@ -293,4 +321,7 @@ export type SaveConfigCommand = z.infer<typeof SaveConfigCommand>;
 export type ListSkillsCommand = z.infer<typeof ListSkillsCommand>;
 export type SaveSkillCommand = z.infer<typeof SaveSkillCommand>;
 export type DeleteSkillCommand = z.infer<typeof DeleteSkillCommand>;
+export type ListDirCommand = z.infer<typeof ListDirCommand>;
+export type ReadFileCommand = z.infer<typeof ReadFileCommand>;
+export type MakeDirCommand = z.infer<typeof MakeDirCommand>;
 export type Command = z.infer<typeof CommandSchema>;

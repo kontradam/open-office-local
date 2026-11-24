@@ -1,3 +1,5 @@
+import { parseLocalModels } from "@office/shared";
+
 /** Role catalog: category > agents for Create Agent role picker */
 export type RoleCatalogAgent = { name: string; desc: string };
 export type RoleCatalogCategory = { category: string; label: string; agents: RoleCatalogAgent[] };
@@ -28,13 +30,19 @@ export const RATING_DIMENSIONS = [
 export type RatingKey = (typeof RATING_DIMENSIONS)[number]["key"];
 export type Ratings = Partial<Record<RatingKey, number>>;
 
+const LOCAL_COLORS = ["#0ea5e9", "#f97316", "#eab308", "#ec4899", "#84cc16", "#14b8a6"];
+
 export const BACKEND_OPTIONS = [
   { id: "claude", name: "Claude", color: "#d97706" },
   { id: "codex", name: "Codex", color: "#a855f7" },
   { id: "gemini", name: "Gemini", color: "#3b82f6" },
+  { id: "agy", name: "Gemini (agy)", color: "#6366f1" },
   { id: "aider", name: "Aider", color: "#22c55e" },
   { id: "opencode", name: "OpenCode", color: "#06b6d4" },
+  ...parseLocalModels(process.env.NEXT_PUBLIC_LOCAL_MODELS).map((m, i) => ({ id: m.id, name: m.name, color: LOCAL_COLORS[i % LOCAL_COLORS.length] })),
 ];
+
+export const DEFAULT_BACKEND = process.env.NEXT_PUBLIC_DEFAULT_BACKEND || "claude";
 
 export const PERSONALITY_PRESETS = [
   { label: "Friendly & Casual", value: "You speak in a friendly, casual, encouraging, and natural tone." },

@@ -4,6 +4,7 @@ import { useState, useCallback } from "react";
 import { nanoid } from "nanoid";
 import { useOfficeStore, folderPickCallbacks } from "@/store/office-store";
 import { sendCommand } from "@/lib/connection";
+import FileBrowser from "./FileBrowser";
 
 type InitialMode = "solo" | "team" | "empty";
 
@@ -31,16 +32,13 @@ export default function NewProjectModal({
   const createProject = useOfficeStore((s) => s.createProject);
 
   const handleBrowse = useCallback(() => {
-    const rid = nanoid(6);
-    folderPickCallbacks.set(rid, (path: string) => {
-      setDirectory(path);
-      // Auto-fill name from folder name if empty
-      if (!name) {
-        const folderName = path.split("/").filter(Boolean).pop() || "";
-        setName(folderName);
-      }
-    });
-    sendCommand({ type: "PICK_FOLDER", requestId: rid });
+    setShowFiles(true);
+  }, []);
+  const [showFiles, setShowFiles] = useState(false);
+  const handlePicked = useCallback((path: string) => {
+    setDirectory(path);
+    // Auto-fill name from folder name if empty
+    if (!name) setName(path.split("/").filter(Boolean).pop() || "");
   }, [name]);
 
   const handleCreate = useCallback(() => {
@@ -56,10 +54,11 @@ export default function NewProjectModal({
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
+      if (showFiles) return;
       if (e.key === "Escape") onClose();
       if (e.key === "Enter" && directory.trim()) handleCreate();
     },
-    [onClose, handleCreate, directory]
+    [onClose, handleCreate, directory, showFiles]
   );
 
   if (!open) return null;
@@ -71,6 +70,7 @@ export default function NewProjectModal({
         style={{ maxWidth: 520 }}
         onClick={(e) => e.stopPropagation()}
       >
+        <FileBrowser open={showFiles} onClose={() => setShowFiles(false)} mode="pick" startPath={directory} onPick={handlePicked} />
         {/* Header */}
         <div className="tm-header">
           <span>NEW PROJECT</span>

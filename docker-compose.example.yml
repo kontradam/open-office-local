@@ -1,0 +1,97 @@
+# Example deployment. Copy to docker-compose.yml and adjust paths, ports and models.
+#   OFFICE_DATA   host folder for the office HOME (logins, state)
+#   PROJECTS      host folder the agents work in
+#   OLLAMA        address of your Ollama server as seen from the gate container
+x-git-safety: &git-safety
+  GIT_CONFIG_COUNT: "4"
+  GIT_CONFIG_KEY_0: core.hooksPath
+  GIT_CONFIG_VALUE_0: /dev/null
+  GIT_CONFIG_KEY_1: core.fsmonitor
+  GIT_CONFIG_VALUE_1: "false"
+  GIT_CONFIG_KEY_2: user.name
+  GIT_CONFIG_VALUE_2: Office agent
+  GIT_CONFIG_KEY_3: user.email
+  GIT_CONFIG_VALUE_3: agent@office.local
+
+services:
+  open-office:
+    build:
+      context: .
+      dockerfile: Dockerfile.office
+      args:
+        LOCAL_MODELS: "qwen|Qwen 3 14B (local)|qwen3:14b"
+    image: open-office:local
+    restart: unless-stopped
+    env_file:
+      - path: .env.gemini
+        required: false
+    command: ["sh", "/app/scripts/start-tabs.sh"]
+    ports:
+      - "127.0.0.1:9090:9090"
+      - "127.0.0.1:9101-9103:9101-9103"
+    volumes:
+      - ${OFFICE_DATA:-./data/home}:/home/node
+      - ${PROJECTS:-./data/projects}:/home/node/projects
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 16g
+    pids_limit: 2048
+    environment:
+      <<: *git-safety
+      WS_PORT: "9090"
+      PROJECT_PORTS: "9101 9102 9103"
+      LOCAL_MODELS: "qwen|Qwen 3 14B (local)|qwen3:14b"
+      LEADER_TIMEOUT_MIN: "30"
+      WORKER_TIMEOUT_MIN: "180"
+      # QUICK_CONNECT_TAILNET: "1"   # allow /connect without a pairing code from Tailscale addresses
+    networks:
+      default: {}
+      local: {}
+    depends_on: [local-models]
+
+  # Local models: no internet, no credentials; sees only the projects and the gate.
+  local-models:
+    image: open-office:local
+    restart: unless-stopped
+    command: ["python3", "-u", "/app/local/server.py"]
+    environment:
+      <<: *git-safety
+      OFFICE_NAME: main
+      MODELS: "qwen3:14b"
+    volumes:
+      - ${LOCAL_DATA:-./data/local-home}:/home/node
+      - ${PROJECTS:-./data/projects}:/home/node/projects
+      - ${OFFICE_DATA:-./data/home}/.open-office/worktrees:/home/node/.open-office/worktrees
+      - ${GPU_QUEUE:-./data/gpu-queue}:/queue
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 8g
+    pids_limit: 1024
+    networks:
+      local: {}
+    depends_on: [ollama-gate]
+
+  # The only path to Ollama; exposes no ports.
+  ollama-gate:
+    image: python:3.12-alpine
+    restart: unless-stopped
+    command: ["python3", "-u", "/gate.py"]
+    environment:
+      OLLAMA: "${OLLAMA:-host.docker.internal:11434}"
+      MODELS: "qwen3:14b"
+    extra_hosts: ["host.docker.internal:host-gateway"]
+    volumes:
+      - ./ollama-gate/gate.py:/gate.py:ro
+    read_only: true
+    user: "65534:65534"
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 256m
+    networks:
+      local: {}
+      gate-out: {}
+
+networks:
+  local:
+    internal: true
+  gate-out: {}

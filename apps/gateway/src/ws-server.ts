@@ -21,6 +21,13 @@ function isTunnelRequest(req: IncomingMessage): boolean {
   return !!(req.headers["cf-connecting-ip"] || req.headers["cf-ray"]);
 }
 
+function fromTailnet(req: IncomingMessage): boolean {
+  if (!process.env.QUICK_CONNECT_TAILNET) return false;
+  const a = (req.socket.remoteAddress || "").replace(/^::ffff:/, "");
+  const m = a.match(/^100\.(\d+)\.\d+\.\d+$/);
+  return !!m && +m[1] >= 64 && +m[1] <= 127;
+}
+
 let wss: WebSocketServer | null = null;
 const clients = new Map<WebSocket, { role: UserRole; clientId: string }>();
 let pairCode: string | null = null;
@@ -51,6 +58,14 @@ function persistSessionTokens() {
 }
 
 const sessionTokens = loadSessionTokens();
+
+function tokenRole(t: string): UserRole | undefined {
+  const r = sessionTokens.get(t);
+  if (r) return r;
+  const f = process.env.MAIN_OFFICE_TOKENS;
+  if (!f) return undefined;
+  try { return JSON.parse(readFileSync(f, "utf-8"))[t] === "owner" ? ("owner" as UserRole) : undefined; } catch { return undefined; }
+}
 
 function addSessionToken(token: string, role: UserRole) {
   sessionTokens.set(token, role);
@@ -104,7 +119,6 @@ export const wsChannel: Channel = {
     return new Promise((promiseResolve) => {
       const requestHandler = async (req: IncomingMessage, res: ServerResponse) => {
         // CORS headers
-        res.setHeader("Access-Control-Allow-Origin", "*");
         res.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
         res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 
@@ -116,7 +130,7 @@ export const wsChannel: Channel = {
 
         // Quick connect — local-only, never exposed through tunnel
         if (req.method === "GET" && req.url === "/connect") {
-          if (config.ablyApiKey || isTunnelRequest(req)) {
+          if ((process.env.DISABLE_QUICK_CONNECT && !fromTailnet(req)) || config.ablyApiKey || isTunnelRequest(req)) {
             res.writeHead(403, { "Content-Type": "application/json" });
             res.end(JSON.stringify({ error: "Quick connect disabled" }));
             return;
@@ -150,7 +164,7 @@ export const wsChannel: Channel = {
               res.writeHead(200, { "Content-Type": "application/json" });
               res.end(JSON.stringify({
                 machineId: config.machineId,
-                wsUrl: `ws://localhost:${config.wsPort}`,
+                wsUrl: `ws://${req.headers.host ?? `localhost:${config.wsPort}`}`,
                 hasAbly: !!config.ablyApiKey,
                 role: "owner",
                 sessionToken,
@@ -247,7 +261,7 @@ export const wsChannel: Channel = {
                 res.end(JSON.stringify({ error: "Session token required" }));
                 return;
               }
-              const clientRole = sessionTokens.get(sessionToken);
+              const clientRole = tokenRole(sessionToken);
               if (!clientRole) {
                 res.writeHead(401, { "Content-Type": "application/json" });
                 res.end(JSON.stringify({ error: "Invalid session token" }));
@@ -339,6 +353,14 @@ export const wsChannel: Channel = {
             res.writeHead(404, { "Content-Type": "text/plain" });
             res.end("Not found");
           }
+          return;
+        }
+
+        // /preview-app -> /preview-app/ so relative asset paths resolve inside the preview
+        if (/^\/preview-(app|static)(\?|$)/.test(url)) {
+          const [pathname, query] = url.split("?");
+          res.writeHead(301, { Location: `${pathname}/${query ? "?" + query : ""}` });
+          res.end();
           return;
         }
 
@@ -437,7 +459,7 @@ export const wsChannel: Channel = {
                 if (pendingAuth.has(ws)) {
                   if (msg.type === "AUTH") {
                     if (msg.sessionToken) {
-                      const role = sessionTokens.get(msg.sessionToken);
+                      const role = tokenRole(msg.sessionToken);
                       if (role) {
                         const clientId = nanoid(8);
                         clients.set(ws, { role, clientId });
@@ -536,6 +558,7 @@ async function serveStatic(req: IncomingMessage, res: ServerResponse) {
     "/pair": "/pair.html",
     "/office": "/office.html",
     "/join": "/join.html",
+    "/tabs": "/tabs.html",
   };
 
   let filePath: string;

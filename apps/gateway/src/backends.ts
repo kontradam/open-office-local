@@ -3,6 +3,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import { homedir } from "os";
 import path from "path";
 import type { AIBackend } from "@bit-office/orchestrator";
+import { parseLocalModels, type LocalModel } from "@office/shared";
 
 const isRoot = process.getuid?.() === 0;
 
@@ -40,6 +41,14 @@ function ensureClaudeSettingsForRoot() {
 
 ensureClaudeSettingsForRoot();
 
+function localBackend({ id, name, model }: LocalModel): AIBackend {
+  return {
+    id, name, command: "local-agent", instructionPath: "AGENTS.md", stability: "experimental", guardType: "none",
+    supportsResume: false, supportsAgentType: false, supportsNativeWorktree: false, supportsStructuredOutput: true,
+    buildArgs(prompt) { return [model, prompt]; },
+  };
+}
+
 const backends: AIBackend[] = [
   // ── Stable backends ───────────────────────────────────────────
   {
@@ -64,7 +73,7 @@ const backends: AIBackend[] = [
           args.push("--continue");
         }
       }
-      if (opts.noTools) args.push("--tools", "");
+      if (opts.noTools) args.push("--tools", "Read,Glob,Grep");
       if (opts.model) args.push("--model", opts.model);
       if (opts.agentType) args.push("--agent", opts.agentType);
       if (opts.worktree) args.push("--worktree");
@@ -105,6 +114,22 @@ const backends: AIBackend[] = [
     supportsStructuredOutput: false,
     buildArgs(prompt) {
       return ["-p", prompt, "--yolo"];
+    },
+  },
+
+  {
+    id: "agy",
+    name: "Gemini (agy)",
+    command: "agy",
+    instructionPath: "GEMINI.md",
+    stability: "experimental",
+    guardType: "none",
+    supportsResume: false,
+    supportsAgentType: false,
+    supportsNativeWorktree: false,
+    supportsStructuredOutput: false,
+    buildArgs(prompt) {
+      return ["-p", prompt, "--mode", "accept-edits", "--model", process.env.AGY_MODEL || "gemini-3.8-flash-medium"];
     },
   },
 
@@ -175,6 +200,7 @@ const backends: AIBackend[] = [
       return ["run", prompt, "--format", "json"];
     },
   },
+  ...parseLocalModels(process.env.LOCAL_MODELS).map(localBackend),
   {
     id: "pi",
     name: "Pi",

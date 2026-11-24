@@ -3,7 +3,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from "fs";
 import path from "path";
 import { homedir } from "os";
 
-const COMMAND_PORT = 9198;
+const COMMAND_PORT = Number(process.env.PREVIEW_PORT) || 9198;
 
 /** Persistent state for command-mode auto-restart across gateway restarts */
 const DATA_DIR = path.join(
@@ -11,8 +11,10 @@ const DATA_DIR = path.join(
   process.env.NODE_ENV === "development" ? ".open-office-dev" : ".open-office",
   "data",
 );
-const STATE_FILE = path.join(DATA_DIR, "preview-cmd-state.json");
-const STATIC_STATE_FILE = path.join(DATA_DIR, "preview-static-state.json");
+// One state file per gateway: instances in one container share HOME
+const STATE_SUFFIX = process.env.PREVIEW_PORT ? `-${process.env.PREVIEW_PORT}` : "";
+const STATE_FILE = path.join(DATA_DIR, `preview-cmd-state${STATE_SUFFIX}.json`);
+const STATIC_STATE_FILE = path.join(DATA_DIR, `preview-static-state${STATE_SUFFIX}.json`);
 
 interface CmdState { cmd: string; cwd: string; agentPort: number }
 interface StaticState { root: string; entry: string }
@@ -146,8 +148,11 @@ class PreviewServer {
     cmd = cmd.replace(/\s+(?:--port|-p)\s+\d+/gi, "");
     // Replace agent port references
     if (agentPort) cmd = cmd.replace(new RegExp(`\\b${agentPort}\\b`, "g"), String(port));
-    // Inject --port for JS tools (Python uses PORT env var)
-    const isPython = /^python\b|^python3\b/i.test(cmd.trim());
+    // Inject --port for JS tools (Python uses PORT env var); also detect "cd dir && python3 ..."
+    const isPython = /(^|[;&|]\s*)python3?\b/i.test(cmd.trim());
+    if (/\bhttp\.server\b/.test(cmd) && !/\bhttp\.server\b[^;&|]*\b\d{2,5}\b/.test(cmd)) {
+      cmd = cmd.replace(/\bhttp\.server\b/, `http.server ${port}`);   // http.server without a port: force the preview port
+    }
     if (!isPython) {
       cmd = `${cmd} --port ${port}`;
     }
@@ -240,8 +245,8 @@ class PreviewServer {
     const result = this.runCommand(state.cmd, state.cwd, state.agentPort);
     if (!result) return false;
 
-    // Wait for the server to become ready (up to 3s)
-    for (let i = 0; i < 6; i++) {
+    // Wait for the server to become ready (up to 15s)
+    for (let i = 0; i < 30; i++) {
       await new Promise((r) => setTimeout(r, 500));
       if (this.isPortListening(COMMAND_PORT)) return true;
     }

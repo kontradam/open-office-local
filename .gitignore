@@ -20,3 +20,10 @@ apps/desktop/src-tauri/target
 apps/desktop/src-tauri/sidecar
 CONVENTIONS.md
 .codex-agent
+
+# local
+.env.*
+!.env.example
+__pycache__/
+node_modules/
+*.tsbuildinfo

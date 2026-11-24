@@ -886,7 +886,8 @@ export class Orchestrator extends EventEmitter<OrchestratorEventMap> {
       const escalation = wasCancelled ? null : this.retryTracker.getEscalation(taskId);
       if (escalation) {
         const leadId = this.agentManager.getTeamLead();
-        if (leadId && leadId !== agentId) {
+        // Only team members escalate to the lead; solo agent failures do not
+        if (leadId && leadId !== agentId && session?.teamId) {
           const leadSession = this.agentManager.get(leadId);
           if (leadSession) {
             const escalationTaskId = nanoid();
@@ -1087,7 +1088,7 @@ export class Orchestrator extends EventEmitter<OrchestratorEventMap> {
           this.emitEvent({
             type: "team:chat",
             fromAgentId: agentId,
-            message: `Project complete: ${summary}`,
+            message: `Stage complete (the team is still available): ${summary}`,
             messageType: "status",
             timestamp: Date.now(),
           });

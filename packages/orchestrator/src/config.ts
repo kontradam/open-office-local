@@ -23,9 +23,9 @@ export const CONFIG = {
     /** Wait for straggler workers before flushing partial results to leader (ms) */
     resultBatchWindowMs: 20_000,
     /** Leader task timeout — delegation planning only, no tools (ms) */
-    leaderTimeoutMs: 3 * 60 * 1000,
+    leaderTimeoutMs: Number(process.env.LEADER_TIMEOUT_MIN || 3) * 60 * 1000,
     /** Worker task timeout — real coding with full tool access (ms) */
-    workerTimeoutMs: 30 * 60 * 1000,
+    workerTimeoutMs: Number(process.env.WORKER_TIMEOUT_MIN || 30) * 60 * 1000,
     /** Delay before setting agent status back to idle after task completion (ms) */
     idleDoneDelayMs: 5_000,
     /** Delay before setting agent status back to idle after task failure (ms) */

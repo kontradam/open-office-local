@@ -1,0 +1,24 @@
+#!/usr/bin/env python3
+"""Called by the office instead of OpenCode: the work runs in the local-model container and the output comes back on stdout."""
+import json, os, socket, struct, sys
+
+if len(sys.argv) != 3:
+    sys.exit("usage: local-agent <model> <task>")
+host = os.environ.get("LOCAL_AGENT_HOST", "local-models")
+try:
+    s = socket.create_connection((host, 8090), timeout=10)
+except OSError as e:
+    sys.exit(f"local-agent: cannot reach the model container: {e}")
+s.settimeout(None)
+s.sendall(json.dumps({"model": sys.argv[1], "task": sys.argv[2], "cwd": os.getcwd()}).encode() + b"\n")
+f = s.makefile("rb")
+outputs = {b"o": sys.stdout.buffer, b"e": sys.stderr.buffer}
+while True:
+    head = f.read(5)
+    if len(head) < 5:
+        sys.exit("local-agent: connection to the model container was lost")
+    data = f.read(struct.unpack(">I", head[1:])[0])
+    if head[:1] == b"x":
+        sys.exit(data[0])
+    outputs[head[:1]].write(data)
+    outputs[head[:1]].flush()

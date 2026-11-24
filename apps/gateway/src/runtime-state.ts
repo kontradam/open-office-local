@@ -107,7 +107,10 @@ function killAndWait(pid: number): void {
 export function killPreviousInstances(): void {
   const instancesDir = path.dirname(config.instanceDir);
   let dirs: string[];
+  // MULTI_INSTANCE=1: several gateways share one container, so only clean up our own port
+  const multi = process.env.MULTI_INSTANCE === "1";
   try {
+    if (multi) throw new Error("own instance only");
     dirs = readdirSync(instancesDir, { withFileTypes: true })
       .filter(d => d.isDirectory())
       .map(d => path.join(instancesDir, d.name));
@@ -144,7 +147,7 @@ export function killPreviousInstances(): void {
 
   // Phase 2: Kill orphans via port lock files (catches zombies whose runtime.json was lost)
   const targetPort = config.wsPort;
-  for (let p = targetPort; p < targetPort + 10; p++) {
+  for (let p = targetPort; p < targetPort + (multi ? 1 : 10); p++) {
     killPortLockHolder(p);
   }
 }

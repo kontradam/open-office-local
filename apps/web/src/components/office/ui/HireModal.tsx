@@ -2,20 +2,21 @@
 
 import { useState } from "react";
 import { nanoid } from "nanoid";
-import type { AgentDefinition } from "@office/shared";
+import { isLocalBackend, type AgentDefinition } from "@office/shared";
 import { sendCommand } from "@/lib/connection";
 import { folderPickCallbacks } from "@/store/office-store";
-import { BACKEND_OPTIONS } from "./office-constants";
+import { BACKEND_OPTIONS, DEFAULT_BACKEND } from "./office-constants";
 import { generateRandomName } from "./office-utils";
 import { TERM_PANEL, TERM_DIM, TERM_BORDER, TERM_BG, TERM_GREEN, TERM_TEXT, TERM_TEXT_BRIGHT, TERM_SEM_GREEN, TERM_SEM_YELLOW, TERM_SEM_RED } from "./termTheme";
 import SpriteAvatar from "./SpriteAvatar";
 import TermModal from "./primitives/TermModal";
 import TermButton from "./primitives/TermButton";
 import TermInput from "./primitives/TermInput";
+import FileBrowser from "./FileBrowser";
 
 function HireModal({ agentDefs, onHire, onCreate, onEdit, onDelete, onClose, assetsReady, detectedBackends, projectDir }: {
   agentDefs: AgentDefinition[];
-  onHire: (def: AgentDefinition, backend: string, workDir?: string, displayName?: string) => void;
+  onHire: (def: AgentDefinition, backend: string, workDir?: string, displayName?: string, role?: string) => void;
   onCreate: () => void;
   onEdit: (def: AgentDefinition) => void;
   onDelete: (id: string) => void;
@@ -25,11 +26,14 @@ function HireModal({ agentDefs, onHire, onCreate, onEdit, onDelete, onClose, ass
   /** When set, directory is locked to project directory (project-centric mode) */
   projectDir?: string;
 }) {
-  const [selectedBackend, setSelectedBackend] = useState("claude");
+  const [selectedBackend, setSelectedBackend] = useState(DEFAULT_BACKEND);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [selectedDef, setSelectedDef] = useState<AgentDefinition | null>(null);
   const [hireName, setHireName] = useState(() => generateRandomName());
+  const [hireRole, setHireRole] = useState("");
+  const hosted = !isLocalBackend(selectedBackend);
   const [workDir, setWorkDir] = useState<string>(projectDir ?? "");
+  const [showFiles, setShowFiles] = useState(false);
   const dirLocked = !!projectDir;
 
   const builtinAgents = agentDefs.filter((a) => a.isBuiltin && a.teamRole === "dev");
@@ -51,7 +55,7 @@ function HireModal({ agentDefs, onHire, onCreate, onEdit, onDelete, onClose, ass
 
   const handleDoHire = () => {
     if (!selectedDef) return;
-    onHire(selectedDef, selectedBackend, workDir || undefined, hireName.trim() || undefined);
+    onHire(selectedDef, selectedBackend, workDir || undefined, hireName.trim() || undefined, hosted ? hireRole.trim() : undefined);
   };
 
   /** Render a single agent card — avatar + role */
@@ -255,9 +259,7 @@ function HireModal({ agentDefs, onHire, onCreate, onEdit, onDelete, onClose, ass
                     <TermButton
                       variant="dim"
                       onClick={() => {
-                        const rid = nanoid(6);
-                        folderPickCallbacks.set(rid, (p) => setWorkDir(p));
-                        sendCommand({ type: "PICK_FOLDER", requestId: rid });
+                        setShowFiles(true);
                       }}
                     >Browse</TermButton>
                   )}
@@ -268,6 +270,14 @@ function HireModal({ agentDefs, onHire, onCreate, onEdit, onDelete, onClose, ass
                   </div>
                 )}
               </div>
+              {/* Role (hosted models only) */}
+              {hosted && (
+                <div>
+                  <div style={{ fontSize: 11, color: TERM_DIM, marginBottom: 3, fontFamily: "var(--font-mono)", letterSpacing: "0.05em" }}>ROLE (optional)</div>
+                  <TermInput type="text" value={hireRole} onChange={(e) => setHireRole(e.target.value)}
+                    placeholder="empty = no role, the model decides and cooperates with the others" style={{ width: "100%" }} />
+                </div>
+              )}
               {/* Name */}
               <div>
                 <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
@@ -303,6 +313,7 @@ function HireModal({ agentDefs, onHire, onCreate, onEdit, onDelete, onClose, ass
           </div>
         )}
       </div>
+      <FileBrowser open={showFiles} onClose={() => setShowFiles(false)} mode="pick" startPath={workDir} onPick={(p) => setWorkDir(p)} />
     </TermModal>
   );
 }

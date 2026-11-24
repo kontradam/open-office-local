@@ -6,7 +6,7 @@ import { useOfficeStore, imageUploadCallbacks } from "@/store/office-store";
 import { connect, sendCommand } from "@/lib/connection";
 import { getConnection } from "@/lib/storage";
 import { nanoid } from "nanoid";
-import type { AgentDefinition } from "@office/shared";
+import { isLocalBackend, type AgentDefinition } from "@office/shared";
 import { OfficeState } from "@/components/office/engine/officeState";
 import { EditorState } from "@/components/office/editor/editorState";
 import { EditTool } from "@/components/office/types";
@@ -19,7 +19,7 @@ import type { SceneAdapter } from "@/components/office/scene/SceneAdapter";
 import { useSceneBridge } from "@/components/office/scene/useSceneBridge";
 
 // Extracted constants, theme, and utils
-import { getStatusConfig, STATUS_CONFIG, BACKEND_OPTIONS } from "@/components/office/ui/office-constants";
+import { getStatusConfig, STATUS_CONFIG, BACKEND_OPTIONS, DEFAULT_BACKEND } from "@/components/office/ui/office-constants";
 import type { Ratings } from "@/components/office/ui/office-constants";
 import { TERM_FONT, TERM_SIZE, TERM_THEMES, TERM_GREEN, TERM_DIM, TERM_TEXT, TERM_TEXT_BRIGHT, TERM_GLOW, TERM_BG, TERM_PANEL, TERM_SURFACE, TERM_BORDER, TERM_BORDER_DIM, TERM_GLOW_BORDER, TERM_SEM_GREEN, TERM_SEM_YELLOW, TERM_SEM_RED, TERM_SEM_BLUE, TERM_SEM_PURPLE, TERM_SEM_CYAN, applyTermTheme } from "@/components/office/ui/termTheme";
 import { isRealEnter, computePreviewUrl, hasWebPreview, buildPreviewCommand } from "@/components/office/ui/office-utils";
@@ -28,6 +28,7 @@ import { APP_VERSION, APP_BUILD_TIME } from "@/lib/appMeta";
 
 // Extracted components — regular imports for hooks and inline-rendered components
 import { useConfirm } from "@/components/office/ui/ConfirmModal";
+import FileBrowser from "@/components/office/ui/FileBrowser";
 import { SysMsg, TokenBadge } from "@/components/office/ui/MessageBubble";
 
 // Dynamic imports for extracted components
@@ -190,12 +191,19 @@ export default function OfficePage() {
   const { addUserMessage, clearTeamMessages, setRole, getVisibleMessages, loadMoreMessages, addAgentToProject, getActiveProject } = useOfficeStore.getState();
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  // Previews open in a new browser tab; the in-app overlay is the fallback when popups are blocked
+  const openPreview = useCallback((url: string | null) => {
+    if (!url) { setPreviewUrl(null); return; }
+    const tab = window.open(url, "_blank");
+    if (tab) tab.opener = null; else setPreviewUrl(url);
+  }, []);
   const [previewRatings, setPreviewRatings] = useState<Ratings>({});
   const [previewRated, setPreviewRated] = useState(false);
   const [celebration, setCelebration] = useState<{ previewUrl?: string; previewPath?: string; previewCmd?: string; previewPort?: number; projectDir?: string; entryFile?: string } | null>(null);
   const [showConfetti, setShowConfetti] = useState(false);
   const { confirm, modal: confirmModal } = useConfirm();
   const [showHireModal, setShowHireModal] = useState(false);
+  const [showFiles, setShowFiles] = useState(false);
   const [showHireTeamModal, setShowHireTeamModal] = useState(false);
   const [showCreateAgent, setShowCreateAgent] = useState(false);
   const [showNewProjectModal, setShowNewProjectModal] = useState(false);
@@ -377,10 +385,14 @@ export default function OfficePage() {
       // Only celebrate when actual work was done (code changes, tests, or preview)
       const r = msg.result;
       if (r.changedFiles.length === 0 && r.testResult === "unknown" && !r.previewUrl && !r.previewCmd && !r.previewPath) continue;
+      // Notes and logs only (.md, .txt, ...): no celebration
+      if (!r.previewUrl && r.changedFiles.length > 0 && r.changedFiles.every(f => /\.(md|txt|log|json|csv)$/i.test(f))) continue;
       // Team member → never celebrate
       if (agentState.teamId && !agentState.isTeamLead) continue;
       // Team leader → only celebrate when isFinalResult is explicitly true
       if (agentState.isTeamLead && !msg.isFinalResult) continue;
+      // The success modal is opt-in; results and previews stay in the chat
+      if (process.env.NEXT_PUBLIC_SUCCESS_MODAL !== "1") continue;
       // Solo agent or leader with isFinalResult → celebrate
       const celebData = { previewUrl: r.previewUrl, previewPath: r.previewPath, previewCmd: r.previewCmd, previewPort: r.previewPort, projectDir: r.projectDir, entryFile: r.entryFile };
       // Only show modal if there's something to preview/launch
@@ -660,7 +672,7 @@ export default function OfficePage() {
     }
   }, [agents]);
 
-  const handleHire = useCallback((def: AgentDefinition, backend: string, workDir?: string, displayName?: string) => {
+  const handleHire = useCallback((def: AgentDefinition, backend: string, workDir?: string, displayName?: string, customRole?: string) => {
     const name = displayName?.trim() || (() => {
       const existing = Array.from(agents.values()).filter(
         (a) => a.name === def.name || a.name.match(new RegExp(`^${def.name} \\d+$`))
@@ -668,7 +680,9 @@ export default function OfficePage() {
       return existing.length === 0 ? def.name : `${def.name} ${existing.length + 1}`;
     })();
     const agentId = `agent-${nanoid(6)}`;
-    sendCommand({ type: "CREATE_AGENT", agentId, name, role: def.skills ? `${def.role} — ${def.skills}` : def.role, palette: def.palette, personality: def.personality, backend, workDir, skillFiles: def.skillFiles });
+    // Hosted models: only the role typed by the owner (or none); local models: the preset role
+    const role = isLocalBackend(backend) ? (def.skills ? `${def.role} — ${def.skills}` : def.role) : (customRole ?? "");
+    sendCommand({ type: "CREATE_AGENT", agentId, name, role, palette: def.palette, personality: def.personality, backend, workDir, skillFiles: def.skillFiles });
     // Store workDir locally so RUN_TASK can pass it as repoPath
     if (workDir) {
       agentWorkDirMap.set(agentId, workDir);
@@ -682,8 +696,8 @@ export default function OfficePage() {
     setShowHireModal(false);
   }, [agents]); // addAgentToProject, getActiveProject are stable refs from getState()
 
-  const handleCreateTeam = useCallback((leadId: string, memberIds: string[], backends: Record<string, string>, workDir?: string) => {
-    sendCommand({ type: "CREATE_TEAM", leadId, memberIds, backends, workDir });
+  const handleCreateTeam = useCallback((leadId: string, memberIds: string[], backends: Record<string, string>, workDir?: string, autoApprove?: boolean, names?: Record<string, string>) => {
+    sendCommand({ type: "CREATE_TEAM", leadId, memberIds, backends, workDir, autoApprove, names });
     setShowHireTeamModal(false);
     setExpandedSection("team");
     setSelectedAgent(null);
@@ -728,13 +742,14 @@ export default function OfficePage() {
     (a) => !!a.teamId && (a.status === "working" || a.status === "waiting_approval"),
   );
 
-  const handleStopTeam = useCallback(() => {
+  const handleStopTeam = useCallback(async () => {
+    if (!await confirm("Stop the team? Agents will abort their current tasks. (Closing the window does not stop anything.)")) return;
     sendCommand({ type: "STOP_TEAM" });
     const teamAgents = Array.from(agents.values()).filter((a) => !!a.teamId);
     for (const a of teamAgents) {
       sendCommand({ type: "CANCEL_TASK", agentId: a.agentId, taskId: "" });
     }
-  }, [agents]);
+  }, [agents, confirm]);
 
   const handleFireTeam = useCallback(async () => {
     const teamAgents = Array.from(agents.values()).filter((a) => !!a.teamId);
@@ -1072,7 +1087,7 @@ export default function OfficePage() {
       projectDir: result.projectDir,
       entryFile: result.entryFile,
       summary: result.summary,
-      backend: backend ?? sourceAgent?.backend ?? "claude",
+      backend: backend ?? sourceAgent?.backend ?? DEFAULT_BACKEND,
     });
   }, [agents, reviewOverlay]);
 
@@ -1331,6 +1346,21 @@ export default function OfficePage() {
                 fontFamily: "monospace", letterSpacing: "0.05em",
               }}>
                 COLLABORATOR
+              </span>
+            )}
+            {isOwner && (
+              <span
+                onClick={() => setShowFiles(true)}
+                title="Browse the workspace (read-only)"
+                style={{
+                  fontSize: 10, padding: "3px 7px", cursor: "pointer",
+                  border: `1px solid ${TERM_GREEN}60`, color: TERM_GREEN,
+                  fontFamily: "monospace", letterSpacing: "0.05em",
+                }}
+                onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = TERM_GREEN + "20"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; }}
+              >
+                FILES
               </span>
             )}
             {isOwner && (
@@ -1912,7 +1942,7 @@ export default function OfficePage() {
                   clearTeamMessages();
                 }}
                 onSuggest={handleSuggest}
-                onPreview={setPreviewUrl}
+                onPreview={openPreview}
                 onReview={(agentId, result, backend) => handleReview(agentId, result, backend)}
                 detectedBackends={detectedBackends}
                 onLoadMore={(agentId) => loadMoreMessages(agentId)}
@@ -2004,7 +2034,7 @@ export default function OfficePage() {
                   }}
                   onEndProject={handleEndProject}
                   onSuggest={handleSuggest}
-                  onPreview={setPreviewUrl}
+                  onPreview={openPreview}
                   autoMerge={ag.autoMerge}
                   pendingMerge={ag.pendingMerge}
                   lastMergeCommit={ag.lastMergeCommit}
@@ -2207,7 +2237,7 @@ export default function OfficePage() {
                 return <>
                   {hasMore && <LoadMoreSentinel onLoadMore={() => loadMoreMessages(agentState.agentId)} />}
                   {visible.map((msg) => (
-                    <MessageBubble key={msg.id} msg={msg} agentName={agentState.name} onPreview={setPreviewUrl} isTeamLead={agentState.isTeamLead} isTeamMember={mobileIsTeamMember} teamPhase={agentState.isTeamLead ? getAgentPhase(agentState.agentId) : null} />
+                    <MessageBubble key={msg.id} msg={msg} agentName={agentState.name} onPreview={openPreview} isTeamLead={agentState.isTeamLead} isTeamMember={mobileIsTeamMember} teamPhase={agentState.isTeamLead ? getAgentPhase(agentState.agentId) : null} />
                   ))}
                 </>;
               })()}
@@ -2509,6 +2539,8 @@ export default function OfficePage() {
         />
       )}
 
+      <FileBrowser open={showFiles} onClose={() => setShowFiles(false)} mode="view" startPath={getActiveProject()?.directory} />
+
       {showHireModal && (
         <HireModal
           agentDefs={agentDefs}
@@ -2571,7 +2603,7 @@ export default function OfficePage() {
         onClose={() => setShowHistory(false)}
         onPreview={(preview, ratings) => {
           const url = computePreviewUrl(preview);
-          if (url) setPreviewUrl(url);
+          if (url) openPreview(url);
           if (ratings && Object.keys(ratings).length > 0) {
             setPreviewRatings(ratings as Ratings);
             setPreviewRated(true);
@@ -2602,7 +2634,7 @@ export default function OfficePage() {
           previewPort={celebration.previewPort}
           projectDir={celebration.projectDir}
           entryFile={celebration.entryFile}
-          onPreview={(url) => { setPreviewUrl(url); setCelebration(null); setShowConfetti(false); }}
+          onPreview={(url) => { openPreview(url); setCelebration(null); setShowConfetti(false); }}
           onDismiss={() => { setCelebration(null); setShowConfetti(false); }}
         />
       )}

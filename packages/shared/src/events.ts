@@ -229,6 +229,31 @@ export const FolderPickedEvent = z.object({
   path: z.string(),
 });
 
+export const DirListedEvent = z.object({
+  type: z.literal("DIR_LISTED"),
+  requestId: z.string(),
+  path: z.string(),
+  root: z.string(),
+  entries: z.array(z.object({ name: z.string(), dir: z.boolean(), size: z.number(), mtime: z.number() })),
+  truncated: z.boolean().optional(),
+  error: z.string().optional(),
+  /** MAKE_DIR: full path of the created folder */
+  created: z.string().optional(),
+});
+
+export const FileReadEvent = z.object({
+  type: z.literal("FILE_READ"),
+  requestId: z.string(),
+  path: z.string(),
+  size: z.number(),
+  /** text = UTF-8 content, image = base64 data, binary = no content */
+  kind: z.enum(["text", "image", "binary"]),
+  mime: z.string().optional(),
+  content: z.string().optional(),
+  truncated: z.boolean().optional(),
+  error: z.string().optional(),
+});
+
 export const ImageUploadedEvent = z.object({
   type: z.literal("IMAGE_UPLOADED"),
   requestId: z.string(),
@@ -325,6 +350,8 @@ export const GatewayEventSchema = z.discriminatedUnion("type", [
   ProjectDataEvent,
   PreviewReadyEvent,
   FolderPickedEvent,
+  DirListedEvent,
+  FileReadEvent,
   ImageUploadedEvent,
   BackendsAvailableEvent,
   ConfigLoadedEvent,
@@ -370,4 +397,6 @@ export type WorktreeMergedEvent = z.infer<typeof WorktreeMergedEvent>;
 export type WorktreeRevertedEvent = z.infer<typeof WorktreeRevertedEvent>;
 export type AutoMergeUpdatedEvent = z.infer<typeof AutoMergeUpdatedEvent>;
 export type SkillListEvent = z.infer<typeof SkillListEvent>;
+export type DirListedEvent = z.infer<typeof DirListedEvent>;
+export type FileReadEvent = z.infer<typeof FileReadEvent>;
 export type GatewayEvent = z.infer<typeof GatewayEventSchema>;

@@ -19,6 +19,17 @@ export function saveConnection(info: ConnectionInfo) {
 }
 
 export function getConnection(): ConnectionInfo | null {
+  // Project tab opened from tabs.html: the main office owner token arrives once in #office=... and is removed from the URL
+  try {
+    const m = typeof location !== "undefined" ? location.hash.match(/office=([^&]+)/) : null;
+    if (m) {
+      const d = JSON.parse(decodeURIComponent(m[1]));
+      const info: ConnectionInfo = { mode: "ws", machineId: d.m, gatewayId: `port-${location.port}`, wsUrl: location.origin.replace(/^http/, "ws"), role: "owner", sessionToken: d.t };
+      saveConnection(info);
+      history.replaceState(null, "", location.pathname + location.search);
+      return info;
+    }
+  } catch { /* fall back to normal pairing */ }
   // Prefer sessionStorage (tab-specific), fall back to localStorage (owner persisted)
   const raw = sessionStorage.getItem(CONNECTION_KEY) ?? localStorage.getItem(CONNECTION_KEY);
   if (!raw) return null;

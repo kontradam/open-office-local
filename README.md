@@ -1,3 +1,42 @@
+# Open Office Local
+
+A fork of [Open Office](https://github.com/longyangxi/bit-office) by [longyangxi](https://github.com/longyangxi) and contributors, adapted for running a private AI office on a home server with local models next to hosted ones.
+
+All credit for the original project goes to its authors. This fork is released under the same MIT license; see [LICENSE](LICENSE).
+
+## What this fork adds
+
+- **Local models through Ollama.** Configure them with `LOCAL_MODELS="id|Label|ollama-model,..."`. Each one appears as a `local-<id>` backend and runs OpenCode in a separate container (`local/server.py`) with no internet access and no credentials.
+- **Ollama gate** (`ollama-gate/gate.py`). Agents can only reach the models you allow. Pulling, deleting and creating models is blocked.
+- **Result verification for local models.** The server compares project files before and after a task and runs the command from a `.verify` file, if there is one. A task that changed nothing or failed verification is reported as an error.
+- **Shared GPU queue.** Several offices can share one GPU folder (`/queue`), so only one local model runs at a time.
+- **Project tabs** (`/tabs`, `scripts/start-tabs.sh`). Several gateways run in one container, each with its own team, chat and memory. You pair once in the main office and the tabs reuse its owner token.
+- **File browser** in the office. It is read-only and confined to the workspace; the only write it allows is creating new folders. It also replaces the native folder picker, which does not work in a container.
+- **Unattended team mode.** The lead's plan is approved automatically. You can also set custom agent names when you hire a team.
+- **Working in place.** A team started on an existing folder works there instead of creating a subfolder; the current state is committed first.
+- **Roles for hosted models.** Hosted models get no preset role, only an optional role you type in. Local models keep the preset roles.
+- **Quick connect from Tailscale** (`QUICK_CONNECT_TAILNET=1`). `/connect` works without a pairing code, but only from 100.64.0.0/10 addresses.
+- **Smaller fixes:**
+  - previews open in a new browser tab;
+  - one preview state file per gateway;
+  - Python preview commands are detected after `cd ... &&`;
+  - timeouts are configurable (`LEADER_TIMEOUT_MIN`, `WORKER_TIMEOUT_MIN`);
+  - the wildcard CORS header is removed;
+  - the success modal is opt-in (`NEXT_PUBLIC_SUCCESS_MODAL=1`).
+
+## Running it in Docker
+
+```bash
+cp docker-compose.example.yml docker-compose.yml   # adjust paths, ports and models
+docker compose up -d --build
+```
+
+Then open `http://127.0.0.1:9090/pair`, and after pairing open `/tabs`. For local models, put an OpenCode config based on `local/opencode.example.json` in `~/.config/opencode/` inside the local-models container's HOME.
+
+---
+
+## Original README
+
 <div align="center">
 
 # Open Office
@@ -9,7 +48,7 @@
 [![Node.js](https://img.shields.io/badge/Node.js-18+-339933?logo=node.js&logoColor=white)](https://nodejs.org/)
 [![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/longyangxi/open-office/pulls)
 
-**Supports Claude, Codex, Gemini, Copilot, Cursor, Aider, OpenCode, Pi & Sapling — one team 🚀**
+**Supports Claude, Codex, Gemini, Copilot, Cursor, Aider, OpenCode, Pi & Sapling — one team**
 
 
 [Quick Start](#quick-start) | [Features](#features) | [Architecture](#architecture) | [Contributing](#contributing)

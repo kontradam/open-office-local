@@ -3,6 +3,8 @@
 import { useOfficeStore } from "@/store/office-store";
 import type { Project } from "@/store/office-store";
 import { useCallback, useMemo } from "react";
+import { sendCommand } from "@/lib/connection";
+import { useConfirm } from "./ConfirmModal";
 
 interface ProjectBarProps {
   onNewProject: () => void;
@@ -20,6 +22,23 @@ export default function ProjectBar({ onNewProject, onHireAgent }: ProjectBarProp
   const activeProjectId = useOfficeStore((s) => s.activeProjectId);
   const agents = useOfficeStore((s) => s.agents);
   const setActiveProject = useOfficeStore((s) => s.setActiveProject);
+  const archiveProject = useOfficeStore((s) => s.archiveProject);
+  const { confirm, modal: confirmModal } = useConfirm();
+
+  // Closing a tab fires the project's agents (the whole team, if any) and archives the project; files stay
+  const handleClose = useCallback(async (p: Project) => {
+    const present = p.agentIds.filter((id) => agents.has(id));
+    const hasTeam = present.some((id) => !!agents.get(id)?.teamId);
+    const msg = `Close project "${p.name}"? `
+      + (present.length ? `Its agents (${present.length}) will be fired${hasTeam ? ", together with the whole team" : ""}. ` : "")
+      + "Files in the folder stay.";
+    if (!(await confirm(msg))) return;
+    if (hasTeam) sendCommand({ type: "FIRE_TEAM" });
+    for (const id of present) {
+      if (!agents.get(id)?.teamId) sendCommand({ type: "FIRE_AGENT", agentId: id });
+    }
+    archiveProject(p.id);
+  }, [agents, archiveProject, confirm]);
 
   const activeProjects = useMemo(() => {
     const list: Project[] = [];
@@ -55,6 +74,7 @@ export default function ProjectBar({ onNewProject, onHireAgent }: ProjectBarProp
 
   return (
     <div className="pbar">
+      {confirmModal}
       <div className="pbar-tabs">
         {activeProjects.map((p) => {
           const isActive = p.id === activeProjectId;
@@ -68,6 +88,15 @@ export default function ProjectBar({ onNewProject, onHireAgent }: ProjectBarProp
             >
               <span className="pbar-tab-name">{p.name}</span>
               <span className="pbar-tab-count">{agentCount}</span>
+              <span
+                role="button"
+                aria-label={`Close project ${p.name}`}
+                title="Close project"
+                onClick={(e) => { e.stopPropagation(); handleClose(p); }}
+                style={{ marginLeft: 2, padding: "0 4px", opacity: 0.55, cursor: "pointer", lineHeight: 1 }}
+                onMouseEnter={(e) => { e.currentTarget.style.opacity = "1"; }}
+                onMouseLeave={(e) => { e.currentTarget.style.opacity = "0.55"; }}
+              >×</span>
             </button>
           );
         })}

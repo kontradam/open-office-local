@@ -397,9 +397,16 @@ export class AgentSession {
         }
       }
 
+      // Hosted models get no preset role, only a cooperation note (plus a role typed by the owner, if any).
+      // Local models keep the preset role; the reviewer stays the reviewer.
+      const COOPERATE = "you work together with the other agents on this project: cooperate with them, decide yourself how you can help best";
+      const promptRole = this._isTeamLead ? "Team Lead"
+        : this.backend.id.startsWith("local-") ? this.role
+        : !this.role.trim() ? COOPERATE
+        : `${this.role} (${COOPERATE})`;
       const templateVars = {
         name: this.name,
-        role: this._isTeamLead ? "Team Lead" : this.role,
+        role: promptRole,
         personality: this.personality ? `${this.personality}` : "",
         teamRoster: teamContext ?? "",
         originalTask,
@@ -415,9 +422,8 @@ export class AgentSession {
       let agentType: string | undefined;
       if (this.backend.supportsAgentType && !this._isTeamLead) {
         const roleName = this.role.split(/\s*[—–]\s*/)[0].trim();
-        if (roleName && roleName.length > 2) {
-          agentType = roleName;
-        }
+        // No preset Claude Code agent profiles (--agent)
+        void roleName;
       }
 
       let fullPrompt: string;
@@ -450,6 +456,8 @@ export class AgentSession {
         const canResume = !isReviewer && this.hasHistory && !!this.sessionId;
         fullPrompt = this._renderPrompt(canResume ? "worker-continue" : workerInitial, templateVars);
       }
+      if (this._isTeamLead) fullPrompt += "\n\n[You can READ files in the project folder (Read, Glob, Grep), e.g. the .md description the owner mentions. Read them before planning. You never edit files yourself: all changes are delegated to your team.]";
+      if (this._isTeamLead) fullPrompt += "\n\n[Finishing a piece of work does not end the project: you and the team stay available. When the owner wants to talk, brainstorm, ask questions or think out loud, answer him yourself in a natural conversation (in his language) and do NOT delegate. Delegate only when he asks for concrete work or changes.]";
       const fullAccess = this.sandboxMode === "full";
       const verbose = !!process.env.DEBUG;
 
@@ -608,6 +616,33 @@ export class AgentSession {
                 this.sessionId = msg.session_id;
                 saveSessionId(this.agentId, msg.session_id);
                 console.log(`[Agent ${this.name}] Session ID: ${msg.session_id}`);
+              }
+              // opencode / local-agent: {"type":"text"|"tool_use"|"step_finish","part":{...}}
+              if (msg.part && (msg.type === "text" || msg.type === "tool_use" || msg.type === "step_finish" || msg.type === "step_start" || msg.type === "reasoning")) {
+                const part = msg.part;
+                if (msg.type === "text" && typeof part.text === "string" && part.text.trim()) {
+                  this.stdoutBuffer += part.text + "\n";
+                  handleTextLine(part.text, true);
+                  this.persistWorkState("running");
+                } else if (msg.type === "tool_use" && part.tool) {
+                  const toolNames: Record<string, string> = { bash: "Bash", read: "Read", write: "Write", edit: "Edit", grep: "Grep", glob: "Glob", list: "Glob" };
+                  const toolName = toolNames[String(part.tool)] ?? String(part.tool);
+                  const input = (part.state?.input ?? {}) as Record<string, unknown>;
+                  const filePath = (input.filePath ?? input.file_path ?? input.path) as string | undefined;
+                  const toolInput: Record<string, unknown> = { ...input, ...(filePath ? { file_path: filePath } : {}) };
+                  if ((toolName === "Write" || toolName === "Edit") && filePath) this.taskChangedFiles.add(filePath);
+                  const activity = summarizeToolUse(toolName, toolInput);
+                  if (activity) {
+                    this.lastActivityText = activity;
+                    this.onEvent({ type: "log:activity", agentId: this.agentId, taskId, text: activity });
+                    this.persistWorkState("running");
+                  }
+                } else if (msg.type === "step_finish" && part.tokens) {
+                  this.taskInputTokens += (part.tokens.input ?? 0) + (part.tokens.cache?.read ?? 0);
+                  this.taskOutputTokens += (part.tokens.output ?? 0) + (part.tokens.reasoning ?? 0);
+                  this.onEvent({ type: "token:update", agentId: this.agentId, inputTokens: this.taskInputTokens, outputTokens: this.taskOutputTokens });
+                }
+                continue;
               }
               if (msg.type === "assistant" && msg.message?.content) {
                 // Live token usage from per-turn usage (dedup same-turn repeats)
@@ -780,7 +815,7 @@ export class AgentSession {
             // Already handled in cancelTask() — just clean up and dequeue
             this.dequeueNext();
             return;
-          } else if (code === 0) {
+          } else if (code === 0 && !(this.stdoutBuffer.trim() === "" && /no output produced/i.test(this.stderrBuffer))) {
             this.hasHistory = true;
             this.resumeFailCount = 0; // Reset on success
             saveSessionId(this.agentId, this.sessionId);
@@ -879,7 +914,10 @@ export class AgentSession {
               .filter((l) => /^\s*(ERROR|error|Error)[:\s]/i.test(l))
               .map((l) => l.trim());
             const stderrError = stderrErrorLines[stderrErrorLines.length - 1] ?? "";
-            const errorMsg = stderrError || this.stdoutBuffer.slice(0, 300) || this.stderrBuffer.slice(-300) || `Process exited with code ${code}`;
+            // A CLI that produced no output because a command was blocked: tell the lead plainly
+            const blocked = /no output produced/i.test(this.stderrBuffer) && this.stdoutBuffer.trim() === ""
+              ? "No output: the agent tried to run a command outside the allow list and it was blocked. The task was NOT done." : "";
+            const errorMsg = blocked || stderrError || this.stdoutBuffer.slice(0, 300) || this.stderrBuffer.slice(-300) || `Process exited with code ${code}`;
             this._lastResult = `failed: ${errorMsg.slice(0, 120)}`;
             this.setStatus("error");
             // Auto-cleanup orphaned worktree + branch on failure — but NOT for
