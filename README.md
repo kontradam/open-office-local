@@ -27,11 +27,34 @@ All credit for the original project goes to its authors. This fork is released u
 ## Running it in Docker
 
 ```bash
-cp docker-compose.example.yml docker-compose.yml   # adjust paths, ports and models
-docker compose up -d --build
+git clone https://github.com/kontradam/open-office-local.git
+cd open-office-local
+./scripts/setup.sh            # creates docker-compose.yml and ./data
+docker compose up -d --build  # the first build takes several minutes
+docker compose logs open-office | grep -i -A2 "pair"
 ```
 
-Then open `http://127.0.0.1:9090/pair`, and after pairing open `/tabs`. For local models, put an OpenCode config based on `local/opencode.example.json` in `~/.config/opencode/` inside the local-models container's HOME.
+`setup.sh` creates these folders:
+
+| Folder | Contents |
+|---|---|
+| `data/projects` | the agents' workspace; put your projects here or point `PROJECTS` at another folder |
+| `data/home` | the office HOME: CLI logins, office state, worktrees |
+| `data/local-home` | HOME of the local-models container, including the OpenCode config |
+| `data/gpu-queue` | the shared GPU queue |
+
+The containers run as uid 1000. Data folders that Docker creates on its own belong to root, so run `setup.sh` first.
+
+To use the office:
+
+1. Open `http://127.0.0.1:9090/pair` and enter the pairing code from the logs.
+2. Then open `/tabs` for the project tabs.
+3. Log in to the CLIs you want to use inside the container. For example, run `docker compose exec -it open-office claude`, then `/login`.
+
+To use local models:
+
+- Ollama has to run on the host. You can also set `OLLAMA` to its address.
+- The model names must be the same in three places: `LOCAL_MODELS`, which is set both as a build argument and in the container environment; `MODELS` for `local-models` and `ollama-gate`; and `data/local-home/.config/opencode/opencode.json`.
 
 ---
 

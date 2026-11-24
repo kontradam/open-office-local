@@ -20,7 +20,7 @@ services:
       dockerfile: Dockerfile.office
       args:
         LOCAL_MODELS: "qwen|Qwen 3 14B (local)|qwen3:14b"
-    image: open-office:local
+    image: open-office-local:latest
     restart: unless-stopped
     env_file:
       - path: .env.gemini
@@ -51,7 +51,7 @@ services:
 
   # Local models: no internet, no credentials; sees only the projects and the gate.
   local-models:
-    image: open-office:local
+    image: open-office-local:latest
     restart: unless-stopped
     command: ["python3", "-u", "/app/local/server.py"]
     environment:
